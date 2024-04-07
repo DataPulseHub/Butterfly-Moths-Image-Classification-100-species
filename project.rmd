@@ -1,0 +1,236 @@
+---
+subtitle: "Automatyczna Analiza obrazu"
+author:
+- name: Natalia Wilczek
+  affiliation: Politechnika Lubelska
+date: "(`r format(Sys.time(), '%d %b, %Y')`)"
+output:
+  rmdformats::robobook:
+    toc_depth: 5
+    self_contained: true
+    thumbnails: false
+    lightbox: true
+    gallery: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning=FALSE,message=FALSE)
+```
+
+# **Butterfly & Moths Image Classification 100 species**
+
+![](motyle.png)
+
+# O zbiorze
+
+Dane pochodzą ze strony : <https://www.kaggle.com/datasets/gpiosenka/butterfly-images40-species?datasetId=456014>
+
+Zestaw danych walidacyjnych dla 100 gatunków motyli lub ciem. Wszystkie obrazy są **224 X 224 X 3** w formacie jpg.
+
+Zestaw train składa się z **12594** obrazów podzielonych na **100** podkatalogów, po jednym dla każdego gatunku.
+
+Zestaw test składa się z **500** obrazów podzielonych na **100** podkatalogów z **5** obrazami testowymi na gatunek.
+
+Prawidłowy zestaw składa się z **500** obrazów podzielonych na 100 podkatalogów z 5 obrazami do walidacji na gatunek.
+
+Dołączone są pliki CSV. Plik motyle i ćmy .csv składa się z **4** kolumn z **13595** wierszami. Pierwszy wiersz to nagłówek, pozostałe wiersze dotyczą każdego pliku obrazu w zestawie danych pociągu, testu i walidacji,
+
+Kolumny to identyfikator klasy, ścieżki do plików, etykiety i zestaw danych. Kolumna filepaths zawiera ścieżkę względną do obrazu.
+
+Kolumna etykiet zawiera tekstową etykietę gatunków powiązaną z plikiem obrazu. Kolumna zestawu danych określa, które zestaw danych (train, test lub valid), do którego należy powiązany obraz. Kolumna identyfikatora klasy zawiera numeryczny indeks klasy dla pliku obrazu.
+
+```{r}
+# Wczytanie bibliotek 
+library(tidyverse)
+library(imager)
+library(keras)
+library(caret)
+library(tidyverse)
+library(keras)
+library(tensorflow)
+library(rio)
+library(reticulate)
+py_module_available("PIL")
+
+
+# Załadowanie pliku CSV
+butterfly <- read.csv("C:/Users/natal/Desktop/motyle/butterflies and moths.csv")
+
+# Zdefiniowanie ścieżek do zbiorów 
+train_dir <- "C:/Users/natal/Desktop/motyle/train"
+test_dir <- "C:/Users/natal/Desktop/motyle/test"
+val_dir <- "C:/Users/natal/Desktop/motyle/valid"
+
+
+```
+
+# Wyświelenie obrazków
+
+```{r}
+#Konfiguracja generatorów danych obrazowych
+train_datagen <- image_data_generator(rescale = 1/255,   shear_range = 0.2,
+  zoom_range = 0.2,
+  horizontal_flip = TRUE
+)
+test_datagen <- image_data_generator(rescale = 1/255,   shear_range = 0.2,
+  zoom_range = 0.2,
+  horizontal_flip = TRUE
+)
+val_datagen <- image_data_generator(rescale = 1/255,   shear_range = 0.2,
+  zoom_range = 0.2,
+  horizontal_flip = TRUE
+)
+
+```
+
+```{r}
+# Parametry modelu
+img_width <- 224
+img_height <- 224
+batch_size <- 20
+epochs <- 32
+
+#Tworzenie generatorów danych obrazowych
+train_generator <- flow_images_from_directory(
+  train_dir,
+  generator = train_datagen,
+  target_size = c(img_width, img_height),
+  batch_size = batch_size,
+  class_mode = "categorical"
+)
+
+val_generator <- flow_images_from_directory(
+  val_dir,
+  generato = val_datagen,
+  target_size = c(img_width, img_height),
+  batch_size = batch_size,
+  class_mode = "categorical"
+)
+
+test_generator <- flow_images_from_directory(
+  test_dir,
+  generato = test_datagen,
+  target_size = c(img_width, img_height),
+  batch_size = batch_size,
+  class_mode = "categorical"
+)
+
+```
+
+## Wyświetlenie przykładowych obrazków
+
+```{r}
+par(mfrow = c(4, 4), mar = c(0, 0, 0, 0))
+for (i in 1:16) {
+  img <- train_generator[[1]][[1]][i, , , ]
+ plot(as.raster(img))}
+
+
+
+```
+
+```{r}
+#Przetwarzanie danych
+train_datagen <- image_data_generator(rescale = 1/255)
+test_datagen <- image_data_generator(rescale = 1/255)
+
+```
+
+# Model
+
+```{r}
+model <- keras_model_sequential() %>% 
+  layer_conv_2d(filters = 64, kernel_size = c(3,3), activation = "relu",
+                input_shape = c(img_width, img_height, 3)) %>% 
+  layer_max_pooling_2d(pool_size = c(2,2)) %>% 
+  layer_dropout(rate = 0.25) %>% 
+  layer_conv_2d(filters = 128, kernel_size = c(3,3), activation = "relu") %>% 
+  layer_max_pooling_2d(pool_size = c(2,2)) %>% 
+  layer_dropout(rate = 0.25) %>% 
+  layer_flatten() %>% 
+  layer_dense(units = 512, activation = "relu") %>% 
+  layer_dropout(rate = 0.5) %>% 
+  layer_dense(units = 100, activation = "softmax")
+
+```
+
+```{r}
+# Kompilacja modelu
+model %>% compile(
+  loss = "categorical_crossentropy",
+  optimizer = optimizer_rmsprop(lr = 1e-4),
+  metrics = c("accuracy")
+)
+```
+
+```{r}
+num_train_images <- length(list.files(train_dir))
+num_val_images <- length(list.files(val_dir))
+
+```
+
+```{r}
+# Trenowanie modelu 
+history <- model %>% fit_generator(
+  train_generator,
+steps_per_epoch = as.integer(num_train_images/batch_size), 
+  epochs = epochs,
+  validation_data = val_generator,
+  validation_steps = as.integer(num_val_images/batch_size))
+
+
+# Wykres 
+plot(history)
+
+```
+
+```{r}
+#save_model_hdf5(model,'C:/Users/natal/Desktop/motyle/sciezka.h5' )
+```
+
+## Wyniki uczenia
+
+![](Bez%C2%A0tytu%C5%82u.png)
+
+## Wykres modelu
+
+![](Rplot.png)
+
+```{r}
+load_model_hdf5(filepath= "C://Users//natal//Desktop//motyle//sciezka.h5")
+summary(model)
+```
+
+## Opis `summary()`:
+
+**Architektura warstw:**
+
+1.  Warstwa konwolucyjna (Conv2D) z 64 filtrami, które transformują obraz wejściowy.
+
+2.  Warstwa MaxPooling, która zmniejsza wymiarowość obrazu, zachowując najważniejsze cechy.
+
+3.  Warstwa Dropout, która pomaga w zapobieganiu przeuczeniu sieci poprzez losowe ignorowanie pewnej liczby neuronów podczas treningu.
+
+4.  Druga warstwa konwolucyjna (Conv2D) z 128 filtrami.
+
+5.  Druga warstwa MaxPooling.
+
+6.  Druga warstwa Dropout.
+
+7.  Warstwa Flatten, która spłaszcza dane do jednowymiarowego wektora.
+
+8.  Gęsta warstwa (Dense) z 512 neuronami, która przeprowadza klasyfikację na podstawie cech wyekstrahowanych przez poprzednie warstwy.
+
+9.  Trzecia warstwa Dropout.
+
+10. Końcowa gęsta warstwa (Dense) z 100 neuronami, która przewiduje prawdopodobieństwo przynależności obrazu do każdego z 100 gatunków.
+
+# Wnioski:
+
+Analizując te wyniki, można zauważyć następujące tendencje:
+
+-   Strata na zbiorze treningowym i walidacyjnym maleje wraz z postępem epok, co wskazuje na to, że model jest w stanie dostosowywać się do danych treningowych i generalizować na zbiorze walidacyjnym.
+
+-   Dokładność na zbiorze treningowym również rośnie wraz z postępem epok, co wskazuje na to, że model lepiej klasyfikuje dane treningowe.
+
+-   Jednak dokładność na zbiorze walidacyjnym nie zawsze rośnie wraz z postępem epok. W niektórych epokach dokładność na zbiorze walidacyjnym jest niższa niż dokładność na zbiorze treningowym, co sugeruje pewien poziom przeuczenia modelu.
